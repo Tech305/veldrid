@@ -30,6 +30,7 @@ namespace Veldrid.OpenGL
         public Shader ComputeShader { get; }
 
         private uint _program;
+        private bool _disposeRequested;
         private bool _disposed;
 
         private SetBindingsInfo[] _setInfos;
@@ -42,6 +43,8 @@ namespace Veldrid.OpenGL
         public uint GetShaderStorageBufferCount(uint setSlot) => _setInfos[setSlot].ShaderStorageBufferCount;
 
         public override string Name { get; set; }
+
+        public override bool IsDisposed => _disposeRequested;
 
         public OpenGLPipeline(OpenGLGraphicsDevice gd, ref GraphicsPipelineDescription description)
             : base(ref description)
@@ -225,6 +228,29 @@ namespace Veldrid.OpenGL
                             CheckLastError();
                             uniformBindings[i] = new OpenGLUniformBinding(_program, blockIndex, (uint)blockSize);
                         }
+#if DEBUG && GL_VALIDATE_SHADER_RESOURCE_NAMES
+                        else
+                        {
+                            uint uniformBufferIndex = 0;
+                            uint bufferNameByteCount = 64;
+                            byte* bufferNamePtr = stackalloc byte[(int)bufferNameByteCount];
+                            var names = new List<string>();
+                            while (true)
+                            {
+                                uint actualLength;
+                                glGetActiveUniformBlockName(_program, uniformBufferIndex, bufferNameByteCount, &actualLength, bufferNamePtr);
+
+                                if (glGetError() != 0)
+                                    break;
+
+                                string name = Encoding.UTF8.GetString(bufferNamePtr, (int)actualLength);
+                                names.Add(name);
+                                uniformBufferIndex++;
+                            }
+
+                            throw new VeldridException($"Unable to bind uniform buffer \"{resourceName}\" by name. Valid names for this pipeline are: {string.Join(", ", names)}");
+                        }
+#endif
                     }
                     else if (resource.Kind == ResourceKind.TextureReadOnly)
                     {
@@ -239,6 +265,10 @@ namespace Veldrid.OpenGL
                         resourceNamePtr[byteCount - 1] = 0; // Add null terminator.
                         int location = glGetUniformLocation(_program, resourceNamePtr);
                         CheckLastError();
+#if DEBUG && GL_VALIDATE_SHADER_RESOURCE_NAMES
+                        if(location == -1)
+                            ReportInvalidResourceName(resourceName);
+#endif
                         relativeTextureIndex += 1;
                         textureBindings[i] = new OpenGLTextureBindingSlotInfo() { RelativeIndex = relativeTextureIndex, UniformLocation = location };
                         lastTextureLocation = location;
@@ -257,6 +287,10 @@ namespace Veldrid.OpenGL
                         resourceNamePtr[byteCount - 1] = 0; // Add null terminator.
                         int location = glGetUniformLocation(_program, resourceNamePtr);
                         CheckLastError();
+#if DEBUG && GL_VALIDATE_SHADER_RESOURCE_NAMES
+                        if(location == -1)
+                            ReportInvalidResourceName(resourceName);
+#endif
                         relativeImageIndex += 1;
                         textureBindings[i] = new OpenGLTextureBindingSlotInfo() { RelativeIndex = relativeImageIndex, UniformLocation = location };
                     }
@@ -305,6 +339,34 @@ namespace Veldrid.OpenGL
                 _setInfos[setSlot] = new SetBindingsInfo(uniformBindings, textureBindings, samplerBindings, storageBufferBindings);
             }
         }
+
+#if DEBUG && GL_VALIDATE_SHADER_RESOURCE_NAMES
+        void ReportInvalidResourceName(string resourceName)
+        {
+            uint uniformIndex = 0;
+            uint resourceNameByteCount = 64;
+            byte* resourceNamePtr = stackalloc byte[(int)resourceNameByteCount];
+
+            var names = new List<string>();
+            while (true)
+            {
+                uint actualLength;
+                int size;
+                uint type;
+                glGetActiveUniform(_program, uniformIndex, resourceNameByteCount,
+                    &actualLength, &size, &type, resourceNamePtr);
+
+                if (glGetError() != 0)
+                    break;
+
+                string name = Encoding.UTF8.GetString(resourceNamePtr, (int)actualLength);
+                names.Add(name);
+                uniformIndex++;
+            }
+
+            throw new VeldridException($"Unable to bind uniform \"{resourceName}\" by name. Valid names for this pipeline are: {string.Join(", ", names)}");
+        }
+#endif
 
         private void CreateComputeGLResources()
         {
@@ -365,7 +427,11 @@ namespace Veldrid.OpenGL
 
         public override void Dispose()
         {
-            _gd.EnqueueDisposal(this);
+            if (!_disposeRequested)
+            {
+                _disposeRequested = true;
+                _gd.EnqueueDisposal(this);
+            }
         }
 
         public void DestroyGLResources()

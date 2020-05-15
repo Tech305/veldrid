@@ -28,6 +28,8 @@ namespace Veldrid.Vk
 
         public override uint AttachmentCount { get; }
 
+        public override bool IsDisposed => _destroyed;
+
         public VkFramebuffer(VkGraphicsDevice gd, ref FramebufferDescription description, bool isPresented)
             : base(description.DepthTarget, description.ColorTargets)
         {
@@ -239,8 +241,9 @@ namespace Veldrid.Vk
 
         public override void TransitionToIntermediateLayout(VkCommandBuffer cb)
         {
-            foreach (FramebufferAttachment ca in ColorTargets)
+            for (int i = 0; i < ColorTargets.Count; i++)
             {
+                FramebufferAttachment ca = ColorTargets[i];
                 VkTexture vkTex = Util.AssertSubtype<Texture, VkTexture>(ca.Target);
                 vkTex.SetImageLayout(ca.MipLevel, ca.ArrayLayer, VkImageLayout.ColorAttachmentOptimal);
             }
@@ -256,8 +259,9 @@ namespace Veldrid.Vk
 
         public override void TransitionToFinalLayout(VkCommandBuffer cb)
         {
-            foreach (FramebufferAttachment ca in ColorTargets)
+            for (int i = 0; i < ColorTargets.Count; i++)
             {
+                FramebufferAttachment ca = ColorTargets[i];
                 VkTexture vkTex = Util.AssertSubtype<Texture, VkTexture>(ca.Target);
                 if ((vkTex.Usage & TextureUsage.Sampled) != 0)
                 {
